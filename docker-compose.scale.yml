@@ -1,0 +1,14 @@
+# Horizontal-scaling overlay: run N app replicas behind an nginx load balancer.
+#   docker compose -f docker-compose.yml -f docker-compose.scale.yml up -d --build --scale app=3
+# Each replica auto-derives a distinct Snowflake worker-id from its hostname (WORKER_ID unset).
+services:
+  app:
+    ports: !override []        # replicas must not publish a fixed host port; nginx fronts them
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ["8090:80"]         # load-balancer entrypoint (8080 on host is taken)
+    depends_on:
+      - app

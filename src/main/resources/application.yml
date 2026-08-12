@@ -35,5 +35,5 @@ management:
   endpoint.health.probes.enabled: true
 
 flashdeal:
-  worker-id: ${WORKER_ID:1}
+  worker-id: ${WORKER_ID:-1}   # -1 (default) => auto-derive from hostname for horizontal scaling
   token-ttl: ${TOKEN_TTL:PT10S}

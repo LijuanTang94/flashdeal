@@ -13,9 +13,19 @@ public class SnowflakeIdGenerator {
     private final AtomicLong sequence = new AtomicLong();
     private volatile long lastMillis = -1;
 
-    public SnowflakeIdGenerator(@Value("${flashdeal.worker-id:1}") long workerId) {
-        if (workerId < 0 || workerId > 1023) throw new IllegalArgumentException("worker-id must be 0..1023");
-        this.workerId = workerId;
+    public SnowflakeIdGenerator(@Value("${flashdeal.worker-id:-1}") long configuredWorkerId) {
+        long id = configuredWorkerId >= 0 ? configuredWorkerId : autoWorkerId();
+        if (id > 1023) throw new IllegalArgumentException("worker-id must be 0..1023");
+        this.workerId = id;
+    }
+
+    /** No explicit worker-id configured: derive a stable 10-bit id from the container hostname,
+     *  so horizontally-scaled replicas (each with a unique hostname) get distinct worker ids. */
+    private static long autoWorkerId() {
+        String seed;
+        try { seed = java.net.InetAddress.getLocalHost().getHostName(); }
+        catch (Exception e) { seed = Long.toString(ProcessHandle.current().pid()); }
+        return (seed.hashCode() & 0x7fffffff) % 1024;
     }
 
     public synchronized long nextId() {
