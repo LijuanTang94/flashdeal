@@ -1,6 +1,6 @@
 # FlashDeal
 
-FlashDeal is a clean-room, interview-ready Java 21 flash-sale backend. It keeps the useful distributed-systems problem from tutorial projects while using an independently designed domain model, API, reliability contract, tests, and load-test methodology.
+FlashDeal is a Java 21 flash-sale backend. It takes the genuinely interesting distributed-systems problem — keep a limited stock correct while the request path stays fast — and gives it an independently designed domain model, API, reliability contract, test suite, and load-test methodology.
 
 ## What is implemented
 
@@ -66,8 +66,11 @@ The endpoint returns `202 Accepted` because MySQL persistence happens asynchrono
 ## Tests
 
 ```bash
-mvn verify
+./mvnw verify
 ```
+
+The wrapper downloads its own Maven, so a fresh clone needs only a JDK 21 and a
+running Docker daemon (Testcontainers).
 
 The integration test starts MySQL, Redis, and RabbitMQ with Testcontainers and verifies:
 
@@ -201,13 +204,17 @@ Compare throughput, P95/P99, CPU, database-pool saturation, and RabbitMQ queue d
 - Redis Cluster keys would need a shared hash tag (for example `{voucher:1}`) because one Lua script may only access keys in one hash slot.
 - For a stricter guarantee across Redis and RabbitMQ, add a reservation/outbox log and a reconciliation worker. This version chooses low request latency plus explicit compensation.
 
-## Interview narrative
+## Design invariants
 
-Start from invariants, not products:
+The whole design is organised around four invariants rather than around features:
 
 1. stock never becomes negative;
 2. a user receives at most one order per voucher;
 3. accepted reservations either become an order or are visible for compensation;
 4. redelivery never creates an additional order.
 
-Then explain how Lua protects admission, RabbitMQ moves database work off the request path, and MySQL constraints provide final correctness. Use measured load-test output—not aspirational numbers—in the resume.
+Everything else follows from those. Lua protects admission so the invariants are
+enforced before any slow work happens, RabbitMQ moves database work off the request
+path, and MySQL constraints provide final correctness even if Redis is stale or a
+message is redelivered. The reconciliation queries in `load-tests/reconcile.sql`
+exist to check invariants 1–4 against a real run rather than assert them in prose.
