@@ -79,6 +79,32 @@ The integration test starts MySQL, Redis, and RabbitMQ with Testcontainers and v
 3. a second order from the same user is rejected;
 4. concurrent ID generation produces no duplicates.
 
+## Running more than one replica
+
+Nothing in the request path keeps per-user state in the JVM, so replicas are interchangeable — except
+for one thing: they all mint order ids, and those ids must not collide.
+
+```mermaid
+flowchart TD
+    K6["k6<br/>(inside the compose network)"] --> NG["nginx<br/>round-robin"]
+    NG --> A1["app 1<br/>hostname → worker id 215"]
+    NG --> A2["app 2<br/>hostname → worker id 465"]
+    NG --> A3["app 3<br/>hostname → worker id 555"]
+    A1 & A2 & A3 --> RD[("Redis<br/>stock + one-per-user")]
+    A1 & A2 & A3 --> MQ{{"RabbitMQ"}}
+    MQ --> CN["consumer"]
+    CN --> DB[("MySQL<br/>orders")]
+```
+
+Each replica derives a **distinct 10-bit Snowflake worker id by hashing its container hostname**, so
+scaling out needs no coordination service, no configuration per replica, and no shared counter — the
+ids are unique because the hostnames are. An explicit `flashdeal.worker-id` still wins if you set one;
+the hostname derivation is the fallback that makes `--scale app=N` just work.
+
+That also makes the load balancer's behaviour observable after the fact. The worker id sits in bits
+12–21 of every order id, so `reconcile.sql` recovers it and groups by it — see the distribution in
+[Correctness, reconciled rather than asserted](#correctness-reconciled-rather-than-asserted).
+
 ## Load testing without inventing resume numbers
 
 Everything below was produced by `load-tests/run-benchmark.sh`, which tears the stack
