@@ -1,0 +1,10 @@
+mysql_remaining_stock
+0
+persisted_orders
+1000
+sold_plus_remaining
+1000
+snowflake_worker_id	orders_minted
+232	339
+336	328
+385	333

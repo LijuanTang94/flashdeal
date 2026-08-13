@@ -78,13 +78,80 @@ The integration test starts MySQL, Redis, and RabbitMQ with Testcontainers and v
 
 ## Load testing without inventing resume numbers
 
-Install [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/), increase the seeded voucher stock for the intended run, restart with an empty MySQL volume/Redis instance, then run:
+Everything below was produced by `load-tests/run-benchmark.sh`, which tears the stack
+down (volumes included), rebuilds at a known replica count, waits for the gate to
+answer through nginx, runs k6 **inside the compose network**, drains the queue, and
+runs the reconciliation queries. Raw k6 summaries and reconciliation output are
+committed under `load-tests/results/`.
 
 ```bash
-k6 run --summary-export load-tests/results/summary.json load-tests/seckill.js
+./load-tests/run-benchmark.sh 1                      # baseline, through nginx
+PEAK_RATE=20000 ./load-tests/run-benchmark.sh 3      # scaled, same offered load
 ```
 
-The stages ramp through 1K, 3K, 5K, and 10K arrival iterations per second. Record three layers:
+### Measured results
+
+Environment: Apple M4 Pro (12 cores), Docker Desktop limited to 12 CPUs / 8 GB,
+git `bb14ad3`, 1,000 units of stock, 4 ramp stages of 25–30s each.
+**One iteration issues two HTTP requests** (token, then seckill), so the seckill
+rate is `http_reqs / 2`.
+
+| Offered peak | Replicas | Seckill iters/s | HTTP req/s | P95 | Dropped iters | Peak VUs |
+|---|---|---|---|---|---|---|
+| 10K/s | 1 | 3,510 | 7,000 | **0.73 ms** | 207 | 19 |
+| 10K/s | 3 | 3,508 | 6,993 | 1.34 ms | 489 | 19 |
+| 20K/s | 1 | 4,931 | 9,771 | **470 ms** | 201,804 | 7,914 |
+| 20K/s | 3 | **6,976** | **13,912** | **5.05 ms** | 3,598 | 744 |
+
+Reading these together is the actual result, and it is more interesting than
+"more replicas go faster":
+
+- **At 10K/s offered, one replica is not the bottleneck.** It absorbs the whole ramp
+  at sub-millisecond P95 and drops 207 of 421,276 iterations. Adding replicas here
+  buys nothing and costs a little — three replicas plus the load generator plus MySQL,
+  Redis and RabbitMQ all contend for the same 12 cores, so P95 gets *worse* (0.73 → 1.34 ms).
+- **At 20K/s offered, one replica saturates.** P95 collapses to 470 ms, 202K iterations
+  are dropped, and k6 inflates to 7,914 VUs waiting on responses — the classic queueing signature.
+- **That is the point where horizontal scaling pays.** Three replicas at the same offered
+  load deliver **+41% throughput (4,931 → 6,976 iters/s) and cut P95 by ~93× (470 → 5.05 ms)**,
+  with dropped iterations falling 98% and VUs staying flat at 744.
+
+### Correctness, reconciled rather than asserted
+
+Every run above ended with `sold + remaining = 1000`, and `business_orders_accepted`
+from k6 equalled `persisted_orders` in MySQL — so **zero oversells and zero lost orders**,
+proven by query rather than claimed. `load-tests/reconcile.sql` also recovers the
+Snowflake worker id from bits 12–21 of each order id, which shows the three replicas
+minted non-colliding ids and that nginx spread the load evenly:
+
+```text
+snowflake_worker_id   orders_minted
+215                   331
+465                   326
+555                   343
+```
+
+The load script deliberately sends a share of its traffic (`REPEAT_SHARE`, default 20%)
+from a small pool of repeated user ids, so the one-order-per-user branch is actually
+exercised under load; the duplicate-user query returns zero rows.
+
+### Known limits of this measurement
+
+- The load generator shares the same 12-core machine as the system under test. At an
+  offered 40K/s the run collapses (874K dropped iterations, 60s timeouts) — that is **k6
+  and the Docker bridge giving out, not the application**. Numbers above 20K/s on this
+  host would measure the harness.
+- Stock is 1,000, so after the first 1,000 reservations the remaining traffic exercises
+  the *sold-out rejection* path, which is cheaper than a full reservation. The throughput
+  figures are therefore admission-control throughput — which is the gate's job, but it is
+  not the same as 4,900 successful orders per second.
+- `http_req_failed` sits at 5–7% because concurrent requests from the same pooled user id
+  race on the single-use token, so the loser gets a 401. That is expected behaviour of the
+  token design under deliberately duplicated users, not a server error.
+
+### What to record
+
+Record three layers:
 
 | Layer | Evidence |
 |---|---|
