@@ -142,7 +142,8 @@ Reading these together is the actual result, and it is more interesting than
 - **At 20K/s offered, one replica saturates.** P95 collapses to 470 ms, 202K iterations
   are dropped, and k6 inflates to 7,914 VUs waiting on responses — the classic queueing signature.
 - **That is the point where horizontal scaling pays.** Three replicas at the same offered
-  load deliver **+41% throughput (4,931 → 6,976 iters/s) and cut P95 by ~93× (470 → 5.05 ms)**,
+  load deliver **+41% throughput (4,931 → 6,976 request flows/s, i.e. k6 iterations —
+  one flow = token POST + reservation POST) and cut P95 by ~93× (470 → 5.05 ms)**,
   with dropped iterations falling 98% and VUs staying flat at 744.
 
 ### Correctness, reconciled rather than asserted
@@ -244,3 +245,12 @@ enforced before any slow work happens, RabbitMQ moves database work off the requ
 path, and MySQL constraints provide final correctness even if Redis is stale or a
 message is redelivered. The reconciliation queries in `load-tests/reconcile.sql`
 exist to check invariants 1–4 against a real run rather than assert them in prose.
+
+---
+
+## Related projects
+
+- **[expense-approval](https://github.com/LijuanTang94/expense-approval)** — Approval workflow with department-scoped RBAC, deployed live
+- **[care-plan-rag](https://github.com/LijuanTang94/care-plan-rag)** — Retrieval-grounded LLM service with a CI eval gate
+
+More at **[github.com/LijuanTang94](https://github.com/LijuanTang94)**.
