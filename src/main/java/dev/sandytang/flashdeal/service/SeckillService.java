@@ -45,9 +45,11 @@ public class SeckillService {
             redis.execute(markQueuedScript, List.of(RedisKeys.orderState(orderId)));
             return new AcceptedOrder(orderId, "QUEUED");
         } catch (RuntimeException publishFailure) {
-            redis.execute(releaseScript,
+            Long released = redis.execute(releaseScript,
                     List.of(RedisKeys.stock(voucherId), RedisKeys.buyers(voucherId), RedisKeys.orderState(orderId)),
                     Long.toString(userId), Long.toString(orderId));
+            // 0: the consumer claimed the order first, so the message landed despite the failed confirm
+            if (released != null && released == 0) return new AcceptedOrder(orderId, "QUEUED");
             throw publishFailure;
         }
     }

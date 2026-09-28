@@ -30,4 +30,12 @@ public class RedisConfig {
         script.setResultType(Long.class);
         return script;
     }
+
+    @Bean
+    DefaultRedisScript<Long> claimOrderScript() {
+        var script = new DefaultRedisScript<Long>();
+        script.setLocation(new ClassPathResource("scripts/claim_order.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
 }

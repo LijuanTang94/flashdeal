@@ -203,7 +203,8 @@ Do not claim “zero lost orders,” a particular P95, or a 10K-user capacity un
 |---|---|
 | concurrent requests | Lua executes atomically in Redis |
 | duplicate user request | Redis buyers set plus DB unique constraint |
-| publisher nack/timeout | correlated confirm plus Lua compensation |
+| publisher nack | correlated confirm plus Lua compensation |
+| publisher confirm timeout (message may still land) | compensation and the consumer race on the order state with atomic Lua CAS: if compensation wins, the late message is dropped; if the consumer wins, compensation is a no-op and the request is accepted |
 | consumer crash before commit | broker redelivers |
 | consumer crash after commit | idempotent consumer treats redelivery as success |
 | transient consumer failure | 3 attempts with exponential backoff |
