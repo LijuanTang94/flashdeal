@@ -4,8 +4,10 @@ import dev.sandytang.flashdeal.persistence.VoucherOrderRepository;
 import dev.sandytang.flashdeal.service.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.*;
@@ -13,6 +15,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Duration;
+import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
 
@@ -43,6 +46,10 @@ class FlashDealIntegrationTest {
     @Autowired SeckillService seckill;
     @Autowired VoucherOrderRepository orders;
     @Autowired StringRedisTemplate redis;
+    @Autowired @Qualifier("releaseVoucherScript") DefaultRedisScript<Long> releaseScript;
+
+    static final String STOCK = "flashdeal:voucher:1:stock";
+    static final String BUYERS = "flashdeal:voucher:1:buyers";
 
     @Test
     void acceptsThenPersistsAnOrderExactlyOnce() {
@@ -68,5 +75,59 @@ class FlashDealIntegrationTest {
         assertThatThrownBy(() -> seckill.reserve(userId, 1, second))
                 .isInstanceOfSatisfying(dev.sandytang.flashdeal.domain.SeckillRejectedException.class,
                         ex -> assertThat(ex.code()).isEqualTo("DUPLICATE_ORDER"));
+    }
+
+    @Test
+    void brokerNackReleasesTheReservationSoTheUserCanRetry() throws Exception {
+        long userId = 90003L;
+        String stockBefore = redis.opsForValue().get(STOCK);
+
+        rejectAllPublishes(true);
+        try {
+            String token = (String) tokens.issue(userId, 1).get("token");
+            assertThatThrownBy(() -> seckill.reserve(userId, 1, token))
+                    .hasMessageContaining("not confirmed")
+                    .rootCause().hasMessageContaining("nack");
+        } finally {
+            rejectAllPublishes(false);
+        }
+
+        assertThat(redis.opsForValue().get(STOCK)).isEqualTo(stockBefore);
+        assertThat(redis.opsForSet().isMember(BUYERS, Long.toString(userId))).isFalse();
+        await().during(Duration.ofSeconds(2)).atMost(Duration.ofSeconds(3))
+                .until(() -> !orders.existsByVoucherIdAndUserId(1, userId));
+
+        String retry = (String) tokens.issue(userId, 1).get("token");
+        var accepted = seckill.reserve(userId, 1, retry);
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(orders.findById(accepted.orderId())).isPresent());
+    }
+
+    @Test
+    void lateCompensationCannotUndoACreatedOrder() {
+        long userId = 90004L;
+        String token = (String) tokens.issue(userId, 1).get("token");
+        var accepted = seckill.reserve(userId, 1, token);
+        String stateKey = "flashdeal:order:" + accepted.orderId() + ":state";
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(redis.opsForValue().get(stateKey)).isEqualTo("CREATED"));
+        String stockAfterOrder = redis.opsForValue().get(STOCK);
+
+        Long released = redis.execute(releaseScript, List.of(STOCK, BUYERS, stateKey),
+                Long.toString(userId), Long.toString(accepted.orderId()));
+
+        assertThat(released).isZero();
+        assertThat(redis.opsForValue().get(STOCK)).isEqualTo(stockAfterOrder);
+        assertThat(redis.opsForSet().isMember(BUYERS, Long.toString(userId))).isTrue();
+    }
+
+    // max-length 0 with reject-publish makes the broker nack every publish to the order queue
+    private static void rejectAllPublishes(boolean on) throws Exception {
+        String[] cmd = on
+                ? new String[]{"rabbitmqctl", "set_policy", "--apply-to", "queues", "reject-all",
+                        "^flashdeal\\.orders\\.create$", "{\"max-length\":0,\"overflow\":\"reject-publish\"}"}
+                : new String[]{"rabbitmqctl", "clear_policy", "reject-all"};
+        var result = RABBIT.execInContainer(cmd);
+        assertThat(result.getExitCode()).as(result.getStderr()).isZero();
     }
 }
