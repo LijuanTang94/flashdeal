@@ -19,6 +19,12 @@ spring:
     password: ${RABBITMQ_PASSWORD:flashdeal}
     publisher-confirm-type: correlated
     publisher-returns: true
+    # Hard channel cap: on JDK 21 each channel.open pins a virtual thread's carrier (Object.wait in
+    # amqp-client), and unbounded opens under load exhaust all 256 carriers and deadlock the socket.
+    cache:
+      channel:
+        size: 64
+        checkout-timeout: 1s
   data:
     redis:
       host: ${REDIS_HOST:localhost}
