@@ -1,6 +1,6 @@
 services:
   mysql:
-    image: mysql:8.4
+    image: mysql:8.4.11
     environment:
       MYSQL_DATABASE: flashdeal
       MYSQL_USER: flashdeal
@@ -14,7 +14,7 @@ services:
       retries: 20
     volumes: ["mysql-data:/var/lib/mysql"]
   redis:
-    image: redis:7.4-alpine
+    image: redis:7.4.11-alpine
     ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -22,7 +22,7 @@ services:
       timeout: 2s
       retries: 20
   rabbitmq:
-    image: rabbitmq:4.0-management-alpine
+    image: rabbitmq:4.0.9-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: flashdeal
       RABBITMQ_DEFAULT_PASS: flashdeal
@@ -38,6 +38,9 @@ services:
       DB_URL: jdbc:mysql://mysql:3306/flashdeal?serverTimezone=UTC
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
+      # Forwarded so the documented comparisons actually reach the container
+      SPRING_THREADS_VIRTUAL_ENABLED: ${SPRING_THREADS_VIRTUAL_ENABLED:-true}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:-}
     ports: ["8080:8080"]
     depends_on:
       mysql: {condition: service_healthy}

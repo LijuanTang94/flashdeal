@@ -5,7 +5,7 @@ RUN mvn -q -DskipTests dependency:go-offline
 COPY src src
 RUN mvn -q -DskipTests package
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21.0.12.1_1-jre
 RUN useradd --system --uid 10001 appuser
 USER appuser
 COPY --from=build /workspace/target/flashdeal-0.1.0.jar /app.jar

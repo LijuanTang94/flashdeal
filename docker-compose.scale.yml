@@ -4,9 +4,12 @@
 services:
   app:
     ports: !override []        # replicas must not publish a fixed host port; nginx fronts them
+    # A CPU cap per replica puts the bottleneck in the app, not in whatever else the laptop is running,
+    # so 1-vs-3 replica comparisons are repeatable. APP_CPUS=0 would remove it.
+    cpus: ${APP_CPUS:-1}
 
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.27.5-alpine
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports: ["8090:80"]         # load-balancer entrypoint (8080 on host is taken)

@@ -5,7 +5,7 @@ FlashDeal is a Java 21 flash-sale backend. It takes the genuinely interesting di
 ## What is implemented
 
 - short-lived, single-use seckill tokens to reject scripted or stale requests;
-- Java 21 virtual threads for blocking request-path I/O;
+- Java 21 virtual threads for blocking request-path I/O, with a bounded RabbitMQ channel cache so they cannot deadlock on carrier pinning;
 - Redis + Lua atomic validation: token, remaining stock, and one-order-per-user;
 - a Snowflake-style 64-bit order ID generator;
 - durable RabbitMQ events with correlated publisher confirms;
@@ -114,41 +114,39 @@ runs the reconciliation queries. Raw k6 summaries and reconciliation output are
 committed under `load-tests/results/`.
 
 ```bash
-./load-tests/run-benchmark.sh 1                      # baseline, through nginx
-PEAK_RATE=20000 ./load-tests/run-benchmark.sh 3      # scaled, same offered load
+PEAK_RATE=10000 ./load-tests/run-benchmark.sh 1      # baseline, through nginx
+PEAK_RATE=10000 ./load-tests/run-benchmark.sh 3      # scaled, same offered load
 ```
+
+Each app replica is capped at one CPU (`APP_CPUS`, default 1, in `docker-compose.scale.yml`)
+and every image is pinned to an exact version. Without the cap, one replica on this host is
+never the bottleneck — k6 and the Docker bridge give out first — so a 1-vs-3 comparison measures
+whatever else the laptop happens to be doing. An earlier uncapped run (August) reported a 1→3
+replica gain at 20K/s that could not be reproduced later for exactly that reason; it has been
+replaced by the capped runs below.
 
 ### Measured results
 
-Environment: Apple M4 Pro (12 cores), Docker Desktop limited to 12 CPUs / 8 GB,
-git `bb14ad3`, 1,000 units of stock, 4 ramp stages of 25–30s each.
-**One iteration issues two HTTP requests** (token, then seckill), so the seckill
-rate is `http_reqs / 2`.
+Environment: Apple M4 Pro (12 cores), Docker Desktop limited to 12 CPUs / 8 GB, one CPU per
+app replica, 1,000 units of stock, 4 ramp stages of 30s each (1K → 3K → 5K → 10K/s).
+**One iteration issues two HTTP requests** (token, then seckill). Two runs per row, in
+alternating order:
 
-| Offered peak | Replicas | Seckill iters/s | HTTP req/s | P95 | Dropped iters | Peak VUs |
+| Offered peak | Replicas | Iterations/s | HTTP req/s | Seckill P95 | Dropped iters | Peak VUs |
 |---|---|---|---|---|---|---|
-| 10K/s | 1 | 3,510 | 7,000 | **0.73 ms** | 207 | 19 |
-| 10K/s | 3 | 3,508 | 6,993 | 1.34 ms | 489 | 19 |
-| 20K/s | 1 | 4,931 | 9,771 | **470 ms** | 201,804 | 7,914 |
-| 20K/s | 3 | **6,976** | **13,912** | **5.05 ms** | 3,598 | 744 |
+| 10K/s | 1 | 1,877 / 1,834 | 3,623 / 3,540 | **3.12 s / 3.49 s** | 139K / 146K | 18.9K / 18.1K |
+| 10K/s | 3 | **3,510 / 3,356** | 6,999 / 6,671 | **1.16 ms / 11.6 ms** | 300 / 15.8K | 443 / 3.4K |
 
-Reading these together is the actual result, and it is more interesting than
-"more replicas go faster":
-
-- **At 10K/s offered, one replica is not the bottleneck.** It absorbs the whole ramp
-  at sub-millisecond P95 and drops 207 of 421,276 iterations. Adding replicas here
-  buys nothing and costs a little — three replicas plus the load generator plus MySQL,
-  Redis and RabbitMQ all contend for the same 12 cores, so P95 gets *worse* (0.73 → 1.34 ms).
-- **At 20K/s offered, one replica saturates.** P95 collapses to 470 ms, 202K iterations
-  are dropped, and k6 inflates to 7,914 VUs waiting on responses — the classic queueing signature.
-- **That is the point where horizontal scaling pays.** Three replicas at the same offered
-  load deliver **+41% throughput (4,931 → 6,976 request flows/s, i.e. k6 iterations —
-  one flow = token POST + reservation POST) and cut P95 by ~93× (470 → 5.05 ms)**,
-  with dropped iterations falling 98% and VUs staying flat at 744.
+- **One replica on one core saturates.** P95 climbs to seconds, a third of the offered
+  iterations are dropped, and k6 inflates to ~18K VUs waiting on responses — the queueing signature.
+- **Three replicas absorb the whole ramp.** Throughput rises ~85% (≈1.86K → ≈3.43K
+  iterations/s) and P95 falls from seconds to milliseconds. In the better run only 300 of
+  421K iterations were dropped, so the 3-replica figure is bounded by the *offered* load,
+  not by the app — the true ceiling is higher.
 
 ### Correctness, reconciled rather than asserted
 
-Every run above ended with `sold + remaining = 1000`, and `business_orders_accepted`
+Every run that drained ended with `sold + remaining = 1000`, and `business_orders_accepted`
 from k6 equalled `persisted_orders` in MySQL — so **zero oversells and zero lost orders**,
 proven by query rather than claimed. `load-tests/reconcile.sql` also recovers the
 Snowflake worker id from bits 12–21 of each order id, which shows the three replicas
@@ -156,9 +154,9 @@ minted non-colliding ids and that nginx spread the load evenly:
 
 ```text
 snowflake_worker_id   orders_minted
-215                   331
-465                   326
-555                   343
+118                   363
+351                   279
+822                   358
 ```
 
 The load script deliberately sends a share of its traffic (`REPEAT_SHARE`, default 20%)
@@ -167,15 +165,14 @@ exercised under load; the duplicate-user query returns zero rows.
 
 ### Known limits of this measurement
 
-- The load generator shares the same 12-core machine as the system under test. At an
-  offered 40K/s the run collapses (874K dropped iterations, 60s timeouts) — that is **k6
-  and the Docker bridge giving out, not the application**. Numbers above 20K/s on this
-  host would measure the harness.
+- The load generator shares the same 12-core machine as the system under test, which is
+  why replicas are CPU-capped: the comparison is between 1 and 3 cores of app capacity,
+  not a statement about what one JVM can do on a dedicated host.
 - Stock is 1,000, so after the first 1,000 reservations the remaining traffic exercises
   the *sold-out rejection* path, which is cheaper than a full reservation. The throughput
   figures are therefore admission-control throughput — which is the gate's job, but it is
-  not the same as 4,900 successful orders per second.
-- `http_req_failed` sits at 5–7% because concurrent requests from the same pooled user id
+  not the same as that many successful orders per second.
+- `http_req_failed` sits at 4–9% partly because concurrent requests from the same pooled user id
   race on the single-use token, so the loser gets a 401. That is expected behaviour of the
   token design under deliberately duplicated users, not a server error.
 
@@ -213,17 +210,42 @@ Do not claim “zero lost orders,” a particular P95, or a 10K-user capacity un
 
 ## Java 21 and virtual threads
 
-Spring Boot virtual threads are enabled with `spring.threads.virtual.enabled=true`. They reduce the cost of waiting on blocking Redis, RabbitMQ, and JDBC calls, but they do not increase MySQL connection-pool capacity or replace admission control. Benchmark both enabled and disabled modes before making a performance claim:
+Spring Boot virtual threads are enabled with `spring.threads.virtual.enabled=true`. They reduce the cost of waiting on blocking Redis, RabbitMQ, and JDBC calls, but they do not increase MySQL connection-pool capacity or replace admission control. The compose file forwards the switch, so both modes can be benchmarked:
 
 ```bash
 # Enabled (project default)
-docker compose up --build
+PEAK_RATE=20000 ./load-tests/run-benchmark.sh 1
 
 # Platform-thread comparison
-SPRING_THREADS_VIRTUAL_ENABLED=false docker compose up --build
+SPRING_THREADS_VIRTUAL_ENABLED=false PEAK_RATE=20000 ./load-tests/run-benchmark.sh 1
 ```
 
-Compare throughput, P95/P99, CPU, database-pool saturation, and RabbitMQ queue depth under the same k6 workload.
+### A carrier-pinning deadlock found under load
+
+With one CPU per replica and 20K/s offered, 3 of 6 runs froze for good: every endpoint
+stopped answering, the consumer stopped acking (RabbitMQ eventually closed it with
+`406 TIMEOUT WAITING FOR ACK`), and orders sat in the queue. Nothing was lost — the dead-letter
+queue stayed empty and the backlog was intact — but nothing moved. Platform threads never froze.
+
+A thread dump that includes virtual threads (`jcmd <pid> Thread.dump_to_file`, run from a JDK
+sidecar because the runtime image is a JRE; saved as
+`load-tests/results/vthread-dump-hang-20260929-201952.txt.gz`) showed the cycle:
+
+1. Under burst load the channel cache (default 25) ran dry, so each request opened a new
+   channel inside `RabbitTemplate.convertAndSend`.
+2. amqp-client waits for `channel.open-ok` in `BlockingCell.get` using `synchronized` +
+   `Object.wait()`. On JDK 21 that pins the virtual thread to its carrier, and the scheduler
+   compensates with a new carrier — up to its cap of 256. The dump had exactly 256 virtual
+   threads parked there, with 321 more queued behind them.
+3. The reply needs traffic on the shared connection socket, whose write lock was held by a
+   virtual thread that was runnable but had no free carrier to run on. Deadlock.
+
+Fix: `spring.rabbitmq.cache.channel.size: 64` with `checkout-timeout: 1s` makes the cache a hard
+limit, so excess publishers wait on a `Semaphore` (which unmounts cleanly) instead of each opening
+a channel, and concurrent `channel.open` calls can never approach the carrier cap. After the change
+the same 20K/s test passed 4 of 4 runs with `sold + remaining = 1000`, and the 10K/s results above
+were re-measured with it in place. JDK 24+ (JEP 491) removes `synchronized` pinning altogether and
+would be the longer-term fix.
 
 ## Deliberate boundaries
 

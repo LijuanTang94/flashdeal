@@ -1,0 +1,172 @@
+{
+    "root_group": {
+        "checks": {
+            "token issued": {
+                "id": "4ce2e26a255ab7837de36cce21b7a853",
+                "passes": 823441,
+                "fails": 5185,
+                "name": "token issued",
+                "path": "::token issued"
+            },
+            "business response is expected": {
+                "fails": 77578,
+                "name": "business response is expected",
+                "path": "::business response is expected",
+                "id": "14ba89c4a819426f8557aba8b6d1eeb9",
+                "passes": 745863
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {}
+    },
+    "metrics": {
+        "http_req_sending": {
+            "avg": 0.02726490558734534,
+            "min": 0.001041,
+            "med": 0.002334,
+            "max": 69.409459,
+            "p(90)": 0.006,
+            "p(95)": 0.01875
+        },
+        "http_req_blocked": {
+            "avg": 0.0031849494748141744,
+            "min": 0.000333,
+            "med": 0.000875,
+            "max": 50.685667,
+            "p(90)": 0.001583,
+            "p(95)": 0.002083
+        },
+        "iteration_duration": {
+            "max": 2072.781334,
+            "p(90)": 13.945020500000005,
+            "p(95)": 30.8746145,
+            "avg": 7.465931997367963,
+            "min": 0.102041,
+            "med": 1.259458
+        },
+        "business_acceptance_rate": {
+            "passes": 1000,
+            "fails": 822441,
+            "value": 0.001214416090527433
+        },
+        "business_orders_accepted": {
+            "count": 1000,
+            "rate": 8.327663174946547
+        },
+        "business_token_failures": {
+            "count": 5185,
+            "rate": 43.17893356209785,
+            "thresholds": {
+                "count==0": true
+            }
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 0.121667,
+            "med": 0.5655,
+            "max": 2053.26971,
+            "p(90)": 5.528849800000003,
+            "p(95)": 12.188195549999994,
+            "avg": 3.4208665920963606
+        },
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.0009527784526898711,
+            "min": 0,
+            "med": 0,
+            "max": 44.616833
+        },
+        "http_req_waiting": {
+            "max": 2054.415834,
+            "p(90)": 5.583583,
+            "p(95)": 12.196917,
+            "avg": 3.445691581047244,
+            "min": 0.041417,
+            "med": 0.548042
+        },
+        "data_received": {
+            "count": 382140544,
+            "rate": 3182337.735922841
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "vus_max": {
+            "value": 1050,
+            "min": 500,
+            "max": 1050
+        },
+        "http_req_receiving": {
+            "p(90)": 0.030083,
+            "p(95)": 0.086958,
+            "avg": 0.06102466993346543,
+            "min": 0.002667,
+            "med": 0.007084,
+            "max": 211.714333
+        },
+        "checks": {
+            "passes": 1569304,
+            "fails": 82763,
+            "value": 0.9499033634834423
+        },
+        "dropped_iterations": {
+            "count": 12819,
+            "rate": 106.7523142396398
+        },
+        "seckill_latency": {
+            "min": 0.12375,
+            "med": 0.599166,
+            "max": 2054.424168,
+            "p(90)": 5.756542,
+            "p(95)": 12.392125,
+            "avg": 3.371927659690284,
+            "thresholds": {
+                "p(95)<100": false
+            }
+        },
+        "iterations": {
+            "count": 828626,
+            "rate": 6900.518226003258
+        },
+        "http_reqs": {
+            "rate": 13757.857518444418,
+            "count": 1652067
+        },
+        "http_req_failed": {
+            "passes": 82763,
+            "fails": 1569304,
+            "thresholds": {
+                "rate<0.01": true
+            },
+            "value": 0.05009663651655774
+        },
+        "vus": {
+            "value": 1049,
+            "min": 0,
+            "max": 1049
+        },
+        "http_req_duration": {
+            "max": 2054.424168,
+            "p(90)": 5.800516400000002,
+            "p(95)": 12.653724999999962,
+            "avg": 3.5339811565681933,
+            "min": 0.056417,
+            "med": 0.574041
+        },
+        "business_orders_rejected": {
+            "count": 822441,
+            "rate": 6849.011629266213
+        },
+        "data_sent": {
+            "count": 274208767,
+            "rate": 2283518.251193398
+        }
+    }
+}

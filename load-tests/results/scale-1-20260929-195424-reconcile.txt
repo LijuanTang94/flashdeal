@@ -1,0 +1,8 @@
+mysql_remaining_stock
+990
+persisted_orders
+10
+sold_plus_remaining
+1000
+snowflake_worker_id	orders_minted
+3	10
