@@ -38,4 +38,20 @@ public class RedisConfig {
         script.setResultType(Long.class);
         return script;
     }
+
+    @Bean
+    DefaultRedisScript<Long> renewWorkerIdScript() {
+        var script = new DefaultRedisScript<Long>();
+        script.setLocation(new ClassPathResource("scripts/renew_worker_id.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    @Bean
+    DefaultRedisScript<Long> releaseWorkerIdScript() {
+        var script = new DefaultRedisScript<Long>();
+        script.setLocation(new ClassPathResource("scripts/release_worker_id.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
 }

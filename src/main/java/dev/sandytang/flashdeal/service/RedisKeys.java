@@ -8,4 +8,5 @@ final class RedisKeys {
         return "flashdeal:voucher:" + voucherId + ":token:" + userId;
     }
     static String orderState(long orderId) { return "flashdeal:order:" + orderId + ":state"; }
+    static String workerId(long workerId) { return "flashdeal:worker:" + workerId; }
 }

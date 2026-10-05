@@ -72,12 +72,15 @@ The endpoint returns `202 Accepted` because MySQL persistence happens asynchrono
 The wrapper downloads its own Maven, so a fresh clone needs only a JDK 21 and a
 running Docker daemon (Testcontainers).
 
-The integration test starts MySQL, Redis, and RabbitMQ with Testcontainers and verifies:
+12 tests in three classes:
 
-1. a valid reservation is eventually persisted;
-2. the order state reaches `CREATED`;
-3. a second order from the same user is rejected;
-4. concurrent ID generation produces no duplicates.
+- `FlashDealIntegrationTest` (6) starts MySQL, Redis, and RabbitMQ with Testcontainers: a valid
+  reservation is persisted exactly once and reaches `CREATED`; a second order from the same user is
+  rejected; a broker nack releases the reservation; a late compensation cannot undo a created order;
+  and both orderings of the publish-timeout race (compensation first, consumer first) end consistently.
+- `WorkerIdLeaseTest` (5) runs against a real Redis: colliding hostnames get distinct worker ids, an
+  explicit id that is already leased fails startup, shutdown frees the id, and renewal detects a takeover.
+- `SnowflakeIdGeneratorTest` (1): 10,000 ids across 8 threads, no duplicates.
 
 ## Running more than one replica
 
@@ -87,19 +90,25 @@ for one thing: they all mint order ids, and those ids must not collide.
 ```mermaid
 flowchart TD
     K6["k6<br/>(inside the compose network)"] --> NG["nginx<br/>round-robin"]
-    NG --> A1["app 1<br/>hostname → worker id 215"]
-    NG --> A2["app 2<br/>hostname → worker id 465"]
-    NG --> A3["app 3<br/>hostname → worker id 555"]
-    A1 & A2 & A3 --> RD[("Redis<br/>stock + one-per-user")]
+    NG --> A1["app 1<br/>leased worker id"]
+    NG --> A2["app 2<br/>leased worker id"]
+    NG --> A3["app 3<br/>leased worker id"]
+    A1 & A2 & A3 --> RD[("Redis<br/>stock + one-per-user<br/>+ worker-id leases")]
     A1 & A2 & A3 --> MQ{{"RabbitMQ"}}
     MQ --> CN["consumer"]
     CN --> DB[("MySQL<br/>orders")]
 ```
 
-Each replica derives a **distinct 10-bit Snowflake worker id by hashing its container hostname**, so
-scaling out needs no coordination service, no configuration per replica, and no shared counter — the
-ids are unique because the hostnames are. An explicit `flashdeal.worker-id` still wins if you set one;
-the hostname derivation is the fallback that makes `--scale app=N` just work.
+Each replica **leases its 10-bit Snowflake worker id in Redis** at startup, so `--scale app=N` needs no
+configuration per replica. It hashes its container hostname to pick a starting id and claims it with
+`SET NX` and a 60 s TTL. A hash only spreads hostnames out; it does not make them distinct (about a 0.3%
+chance of a collision with 3 replicas), so if that id is already leased the replica probes forward to the
+next free one. A background thread renews the lease every 20 s, and shutdown releases it.
+
+The lease costs one Redis round trip at startup and one renewal every 20 s. `nextId()` still runs
+entirely in memory, so the request path is unchanged. If a renewal finds another instance holding the id,
+which can only happen after Redis was unreachable for longer than the TTL, the generator stops minting
+instead of risking duplicate ids. An explicit `flashdeal.worker-id` must be free too, or startup fails.
 
 That also makes the load balancer's behaviour observable after the fact. The worker id sits in bits
 12–21 of every order id, so `reconcile.sql` recovers it and groups by it — see the distribution in
